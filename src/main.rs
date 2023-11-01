@@ -26,17 +26,36 @@ async fn main() {
         .expect("Producer creation error");
 
     let stdin = io::stdin();
-    let lines: Vec<_> = stdin.lock().lines().collect::<Result<_, _>>().unwrap();
+    let reader = stdin.lock();
+    let mut buffer = String::new();
+    let mut brace_count = 0;
 
-    for line in lines {
-        if let Some(key) = extract_key_from_json(&line, &opts.key) {
-            let _ = producer
-                .send(
-                    FutureRecord::to(&opts.topic).payload(&line).key(&key),
-                    Duration::from_secs(10),
-                )
-                .await
-                .expect("Failed to send message to Kafka");
+    for line in reader.lines() {
+        let line = line.unwrap();
+        for ch in line.chars() {
+            buffer.push(ch);
+
+            // Count opening and closing braces
+            if ch == '{' {
+                brace_count += 1;
+            } else if ch == '}' {
+                brace_count -= 1;
+            }
+
+            // If braces are balanced, process the JSON object
+            if brace_count == 0 && !buffer.trim().is_empty() {
+                if let Some(key) = extract_key_from_json(&buffer, &opts.key) {
+                    //println!("sending {} with key: {}", &buffer, &key);
+                    let _ = producer
+                        .send(
+                            FutureRecord::to(&opts.topic).payload(&buffer).key(&key),
+                            Duration::from_secs(10),
+                        )
+                        .await
+                        .expect("Failed to send message to Kafka");
+                }
+                buffer.clear();
+            }
         }
     }
 }
