@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 use clap::Parser;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
