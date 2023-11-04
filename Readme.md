@@ -14,4 +14,5 @@ Publish JSON messages to Kafka from stdin:
 $ echo '{"header": {"id": "12345"}, "data": "sample"}' | ./target/release/kafka_oneshot --server localhost:9092 --key header.id --topic kafka_topic_name
 ```
 
-Multi-line JSON messages are supported as well.
+- Multi-line JSON messages are supported.
+- Multiple JSON messages can be sent - just keep pasting or piping the messages to `kafka_oneshot` once it is running.
