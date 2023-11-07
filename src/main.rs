@@ -19,12 +19,6 @@ enum Mode {
     Both,
 }
 
-impl Default for Mode {
-    fn default() -> Self {
-        Mode::Producer
-    }
-}
-
 #[derive(Clone, Parser)]
 #[command(author, version, about = "A simple pub/sub tool for Kafka", long_about = None)]
 struct Cli {
@@ -126,7 +120,7 @@ async fn run_consumer(opts: Cli) -> KafkaResult<()> {
                         // Assuming the payload is a string, print it out
                         println!(
                             "Key: '{:?}', Payload: '{}'",
-                            msg.key(),
+                            msg.key().map(String::from_utf8_lossy),
                             String::from_utf8_lossy(payload)
                         );
                     }
@@ -144,12 +138,8 @@ async fn main() {
     let opts: Cli = Cli::parse();
 
     match opts.mode {
-        Mode::Producer => {
-            let _ = run_producer(opts).await.unwrap();
-        }
-        Mode::Consumer => {
-            let _ = run_consumer(opts).await.unwrap();
-        }
+        Mode::Producer => run_producer(opts).await.unwrap(),
+        Mode::Consumer => run_consumer(opts).await.unwrap(),
         Mode::Both => {
             tokio::try_join!(run_producer(opts.clone()), run_consumer(opts.clone())).unwrap();
         }
