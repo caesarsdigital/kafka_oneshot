@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.4.8", features = ["derive"] }
-futures = "0.3.29"
+futures = "0.3.30"
 rdkafka = { version = "0.36.0", features = [
   "ssl-vendored",
   "gssapi",
