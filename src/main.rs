@@ -9,8 +9,9 @@ use rdkafka::message::Message;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde_json::Value;
 use std::io::{self, BufRead};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 #[derive(clap::ValueEnum, Clone)]
 enum Mode {
@@ -77,12 +78,13 @@ async fn run_producer(opts: Cli) -> KafkaResult<()> {
                     if let Some(key) =
                         extract_key_from_json(&buffer, &key_path.unwrap_or("id".to_string()))
                     {
-                        let producer_lock = producer_clone.lock().unwrap();
+                        let producer_lock = producer_clone.lock().await;
                         let _ = producer_lock
                             .send(
                                 FutureRecord::to(&topic).payload(&buffer).key(&key),
                                 Duration::from_secs(10),
                             )
+                            // This produce is effectively synchronous now
                             .await
                             .expect("Failed to send message to Kafka");
                     }
