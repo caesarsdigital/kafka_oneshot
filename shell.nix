@@ -11,6 +11,7 @@
 # in
 { pkgs ? import <nixpkgs> {} }:
   pkgs.mkShell rec {
+    isLinux = (builtins.match ".*linux.*" builtins.currentSystem) != null;
     buildInputs = with pkgs; [
       llvmPackages_latest.llvm
       llvmPackages_latest.bintools
@@ -20,10 +21,11 @@
       llvmPackages_latest.lld
       openssl
       cyrus_sasl
-      systemd
+      # systemd # surely this isn't needed
       # To enable faster linking in Rust projects
       clang
       mold
+      libiconv
     ];
      # Only for building bracket-lib, I think:
     nativeBuildInputs = [ pkgs.pkg-config ];
@@ -44,8 +46,10 @@
     # Includes with normal include path
     (builtins.map (a: ''-I"${a}/include"'') [
       # pkgs.libvmi
-      pkgs.glibc.dev
-    ])
+     ] ++ (if isLinux then  [
+        pkgs.glibc.dev # not available on macos      
+      ] else [])
+    )
     # Includes with special directory paths
     ++ [
       ''-I"${pkgs.llvmPackages_latest.libclang.lib}/lib/clang/${pkgs.llvmPackages_latest.libclang.version}/include"''
