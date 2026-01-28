@@ -18,8 +18,9 @@ jobs:
     - name: Install Packages
       run: sudo apt-get install -y libsasl2-dev
     - uses: actions/checkout@v3
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: "1.85"
         components: rustfmt, clippy
     - name: Format
       run: cargo fmt --check
