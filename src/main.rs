@@ -31,7 +31,7 @@ create_str_consts!(
     KAFKA_SSL_CERT_AUTHORITY
 );
 
-use openssl::ssl::{SslConnector, SslFiletype, SslMethod, SslVerifyMode};
+
 
 #[derive(clap::ValueEnum, Clone)]
 enum Mode {
@@ -52,12 +52,24 @@ struct Cli {
     key: Option<String>,
     #[arg(long)]
     topic: String,
+    /// Path to env file with SSL config (KAFKA_SSL_CLIENT_CERT, KAFKA_SSL_CLIENT_KEY, KAFKA_SSL_CERT_AUTHORITY)
+    #[arg(long)]
+    ssl_env_file: Option<String>,
 }
 
 struct SslConfig {
     client_cert: String,
     client_key: String,
     cert_authority: Option<String>,
+}
+
+fn apply_ssl_config(config: &mut ClientConfig, ssl: &SslConfig) {
+    config.set("security.protocol", "ssl");
+    config.set("ssl.certificate.location", &ssl.client_cert);
+    config.set("ssl.key.location", &ssl.client_key);
+    if let Some(ca) = &ssl.cert_authority {
+        config.set("ssl.ca.location", ca);
+    }
 }
 
 fn extract_key_from_json(json_str: &str, pointer: &str) -> Option<String> {
@@ -97,55 +109,18 @@ fn extract_ssl_config(env_map: HashMap<String, String>) -> Option<SslConfig> {
     }
 }
 
-fn build_ssl_connector(ssl_config: SslConfig) -> SslConnector {
-    // ~ OpenSSL offers a variety of complex configurations. Here is an example:
-    let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
-    builder.set_cipher_list("DEFAULT").unwrap();
-    builder.set_verify(SslVerifyMode::PEER);
-
-    // #[cfg(feature = "disable_this")]
-    // info!(
-    //     "loading cert-file={}, key-file={}",
-    //     ssl_config.client_cert, ssl_config.client_key
-    // );
-
-    // TODO: detect filetypes?
-    builder
-        .set_certificate_file(ssl_config.client_cert, SslFiletype::PEM)
-        .unwrap();
-    builder
-        .set_private_key_file(ssl_config.client_key, SslFiletype::PEM)
-        .unwrap();
-    builder.check_private_key().unwrap();
-
-    if let Some(ca_cert) = ssl_config.cert_authority {
-        // info!("loading ca-file={}", ca_cert);
-
-        builder.set_ca_file(ca_cert).unwrap();
-    } else {
-        // ~ allow client specify the CAs through the default paths:
-        // "These locations are read from the SSL_CERT_FILE and
-        // SSL_CERT_DIR environment variables if present, or defaults
-        // specified at OpenSSL build time otherwise."
-        builder.set_default_verify_paths().unwrap();
-    }
-
-    //let connector = builder.build();
-    builder.build()
-
-    // ~ instantiate KafkaClient with the previous OpenSSL setup
-    // let mut client = KafkaClient::new_secure(
-    //     cfg.brokers,
-    //     SecurityConfig::new(connector).with_hostname_verification(cfg.verify_hostname),
-    // );
+fn build_ssl_connector(ssl_config: SslConfig) -> SslConfig {
+    ssl_config
 }
 
-async fn run_producer(opts: Cli) -> KafkaResult<()> {
+async fn run_producer(opts: Cli, ssl_config: Option<&SslConfig>) -> KafkaResult<()> {
+    let mut config = ClientConfig::new();
+    config.set("bootstrap.servers", &opts.server);
+    if let Some(ssl) = ssl_config {
+        apply_ssl_config(&mut config, ssl);
+    }
     let producer: Arc<Mutex<FutureProducer>> = Arc::new(Mutex::new(
-        ClientConfig::new()
-            .set("bootstrap.servers", &opts.server)
-            .create()
-            .expect("Producer creation error"),
+        config.create().expect("Producer creation error"),
     ));
 
     let stdin = io::stdin();
@@ -190,15 +165,17 @@ async fn run_producer(opts: Cli) -> KafkaResult<()> {
     Ok(())
 }
 
-async fn run_consumer(opts: Cli) -> KafkaResult<()> {
-    // Set up the Kafka consumer configuration
-
-    let consumer: rdkafka::consumer::StreamConsumer = ClientConfig::new()
+async fn run_consumer(opts: Cli, ssl_config: Option<&SslConfig>) -> KafkaResult<()> {
+    let mut config = ClientConfig::new();
+    config
         .set("group.id", "kafka_oneshot")
         .set("bootstrap.servers", &opts.server)
         .set("enable.auto.commit", "true")
-        .set("auto.offset.reset", "earliest")
-        .create()?;
+        .set("auto.offset.reset", "earliest");
+    if let Some(ssl) = ssl_config {
+        apply_ssl_config(&mut config, ssl);
+    }
+    let consumer: rdkafka::consumer::StreamConsumer = config.create()?;
 
     // Subscribe to the topic(s)
     consumer.subscribe(&[&opts.topic])?;
@@ -232,11 +209,23 @@ async fn run_consumer(opts: Cli) -> KafkaResult<()> {
 async fn main() {
     let opts: Cli = Cli::parse();
 
+    let ssl_config = opts.ssl_env_file.as_ref().and_then(|path| {
+        read_env_file(path)
+            .ok()
+            .and_then(extract_ssl_config)
+            .map(build_ssl_connector)
+    });
+
     match opts.mode {
-        Mode::Producer => run_producer(opts).await.unwrap(),
-        Mode::Consumer => run_consumer(opts).await.unwrap(),
+        Mode::Producer => run_producer(opts, ssl_config.as_ref()).await.unwrap(),
+        Mode::Consumer => run_consumer(opts, ssl_config.as_ref()).await.unwrap(),
         Mode::Both => {
-            tokio::try_join!(run_producer(opts.clone()), run_consumer(opts.clone())).unwrap();
+            let ssl_ref = ssl_config.as_ref();
+            tokio::try_join!(
+                run_producer(opts.clone(), ssl_ref),
+                run_consumer(opts.clone(), ssl_ref)
+            )
+            .unwrap();
         }
     }
 }
