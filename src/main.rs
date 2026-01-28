@@ -31,8 +31,6 @@ create_str_consts!(
     KAFKA_SSL_CERT_AUTHORITY
 );
 
-
-
 #[derive(clap::ValueEnum, Clone)]
 enum Mode {
     Producer,
