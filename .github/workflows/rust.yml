@@ -18,6 +18,7 @@ jobs:
     - name: Install Packages
       run: sudo apt-get install -y libsasl2-dev
     - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
     - name: Format
       run: cargo fmt --check
     - name: Build
