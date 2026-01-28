@@ -1,17 +1,35 @@
 #![deny(warnings)]
+#![allow(dead_code)]
 
 use clap::Parser;
+use do_notation::*;
 use futures::StreamExt;
 use rdkafka::config::ClientConfig;
-use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::consumer::Consumer;
 use rdkafka::error::KafkaResult;
 use rdkafka::message::Message;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::fs::File;
 use std::io::{self, BufRead};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+
+macro_rules! create_str_consts {
+    ($($name:ident), *) => {
+        $(
+            const $name: &str = stringify!($name);
+        )*
+    };
+}
+
+create_str_consts!(
+    KAFKA_SSL_CLIENT_CERT,
+    KAFKA_SSL_CLIENT_KEY,
+    KAFKA_SSL_CERT_AUTHORITY
+);
 
 #[derive(clap::ValueEnum, Clone)]
 enum Mode {
@@ -32,6 +50,24 @@ struct Cli {
     key: Option<String>,
     #[arg(long)]
     topic: String,
+    /// Path to env file with SSL config (KAFKA_SSL_CLIENT_CERT, KAFKA_SSL_CLIENT_KEY, KAFKA_SSL_CERT_AUTHORITY)
+    #[arg(long)]
+    ssl_env_file: Option<String>,
+}
+
+struct SslConfig {
+    client_cert: String,
+    client_key: String,
+    cert_authority: Option<String>,
+}
+
+fn apply_ssl_config(config: &mut ClientConfig, ssl: &SslConfig) {
+    config.set("security.protocol", "ssl");
+    config.set("ssl.certificate.location", &ssl.client_cert);
+    config.set("ssl.key.location", &ssl.client_key);
+    if let Some(ca) = &ssl.cert_authority {
+        config.set("ssl.ca.location", ca);
+    }
 }
 
 fn extract_key_from_json(json_str: &str, pointer: &str) -> Option<String> {
@@ -48,12 +84,41 @@ fn json_pointer_to_value<'a>(json: &'a Value, pointer: &str) -> Option<&'a Value
     })
 }
 
-async fn run_producer(opts: Cli) -> KafkaResult<()> {
+fn read_env_file(file_path: &str) -> io::Result<HashMap<String, String>> {
+    let file = File::open(file_path)?;
+    let reader = io::BufReader::new(file);
+    let mut env_map = HashMap::new();
+    reader.lines().try_for_each(|line_res| {
+        let line = line_res?;
+        if let Some((key, value)) = line.split_once('=') {
+            env_map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+        io::Result::Ok(())
+    })?;
+    Ok(env_map)
+}
+
+fn extract_ssl_config(env_map: HashMap<String, String>) -> Option<SslConfig> {
+    m! {
+        client_cert <- env_map.get(KAFKA_SSL_CLIENT_CERT).cloned();
+        client_key <- env_map.get(KAFKA_SSL_CLIENT_KEY).cloned();
+        let cert_authority = env_map.get(KAFKA_SSL_CERT_AUTHORITY).cloned();
+        Some(SslConfig { client_cert, client_key, cert_authority })
+    }
+}
+
+fn build_ssl_connector(ssl_config: SslConfig) -> SslConfig {
+    ssl_config
+}
+
+async fn run_producer(opts: Cli, ssl_config: Option<&SslConfig>) -> KafkaResult<()> {
+    let mut config = ClientConfig::new();
+    config.set("bootstrap.servers", &opts.server);
+    if let Some(ssl) = ssl_config {
+        apply_ssl_config(&mut config, ssl);
+    }
     let producer: Arc<Mutex<FutureProducer>> = Arc::new(Mutex::new(
-        ClientConfig::new()
-            .set("bootstrap.servers", &opts.server)
-            .create()
-            .expect("Producer creation error"),
+        config.create().expect("Producer creation error"),
     ));
 
     let stdin = io::stdin();
@@ -98,14 +163,17 @@ async fn run_producer(opts: Cli) -> KafkaResult<()> {
     Ok(())
 }
 
-async fn run_consumer(opts: Cli) -> KafkaResult<()> {
-    // Set up the Kafka consumer configuration
-    let consumer: StreamConsumer = ClientConfig::new()
+async fn run_consumer(opts: Cli, ssl_config: Option<&SslConfig>) -> KafkaResult<()> {
+    let mut config = ClientConfig::new();
+    config
         .set("group.id", "kafka_oneshot")
         .set("bootstrap.servers", &opts.server)
         .set("enable.auto.commit", "true")
-        .set("auto.offset.reset", "earliest")
-        .create()?;
+        .set("auto.offset.reset", "earliest");
+    if let Some(ssl) = ssl_config {
+        apply_ssl_config(&mut config, ssl);
+    }
+    let consumer: rdkafka::consumer::StreamConsumer = config.create()?;
 
     // Subscribe to the topic(s)
     consumer.subscribe(&[&opts.topic])?;
@@ -139,11 +207,23 @@ async fn run_consumer(opts: Cli) -> KafkaResult<()> {
 async fn main() {
     let opts: Cli = Cli::parse();
 
+    let ssl_config = opts.ssl_env_file.as_ref().and_then(|path| {
+        read_env_file(path)
+            .ok()
+            .and_then(extract_ssl_config)
+            .map(build_ssl_connector)
+    });
+
     match opts.mode {
-        Mode::Producer => run_producer(opts).await.unwrap(),
-        Mode::Consumer => run_consumer(opts).await.unwrap(),
+        Mode::Producer => run_producer(opts, ssl_config.as_ref()).await.unwrap(),
+        Mode::Consumer => run_consumer(opts, ssl_config.as_ref()).await.unwrap(),
         Mode::Both => {
-            tokio::try_join!(run_producer(opts.clone()), run_consumer(opts.clone())).unwrap();
+            let ssl_ref = ssl_config.as_ref();
+            tokio::try_join!(
+                run_producer(opts.clone(), ssl_ref),
+                run_consumer(opts.clone(), ssl_ref)
+            )
+            .unwrap();
         }
     }
 }

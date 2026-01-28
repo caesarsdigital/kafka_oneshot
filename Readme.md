@@ -27,6 +27,22 @@ $ echo '{"header": {"id": "12345"}, "data": "sample"}' | ./target/release/kafka_
 Currently it is assumed the key is part of the JSON message.
 Please raise an issue if you need support for a different keying strategy.
 
+### SSL/TLS
+
+Create an env file with your SSL credentials:
+```
+KAFKA_SSL_CLIENT_CERT=/path/to/client.pem
+KAFKA_SSL_CLIENT_KEY=/path/to/client.key
+KAFKA_SSL_CERT_AUTHORITY=/path/to/ca.pem
+```
+
+Then pass it with `--ssl-env-file`:
+```
+kafka_oneshot --server broker:9093 --topic my-topic --ssl-env-file ssl.env
+```
+
+`KAFKA_SSL_CERT_AUTHORITY` is optional (uses system CAs if omitted).
+
 ### Consuming messages from Kafka and writing to stdout
 
 Use `--mode consumer`, for example:
