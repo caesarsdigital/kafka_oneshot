@@ -100,9 +100,9 @@ fn read_env_file(file_path: &str) -> io::Result<HashMap<String, String>> {
 
 fn extract_ssl_config(env_map: HashMap<String, String>) -> Option<SslConfig> {
     m! {
-        client_cert <- env_map.get(&KAFKA_SSL_CLIENT_CERT.to_string()).cloned();
-        client_key <- env_map.get(&KAFKA_SSL_CLIENT_KEY.to_string()).cloned();
-        let cert_authority = env_map.get(&KAFKA_SSL_CERT_AUTHORITY.to_string()).cloned();
+        client_cert <- env_map.get(KAFKA_SSL_CLIENT_CERT).cloned();
+        client_key <- env_map.get(KAFKA_SSL_CLIENT_KEY).cloned();
+        let cert_authority = env_map.get(KAFKA_SSL_CERT_AUTHORITY).cloned();
         Some(SslConfig { client_cert, client_key, cert_authority })
     }
 }
